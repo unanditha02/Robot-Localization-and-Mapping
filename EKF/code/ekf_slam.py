@@ -86,6 +86,11 @@ def warp2pi(angle_rad):
     \param angle_rad Input angle in radius
     \return angle_rad_warped Warped angle to [-\pi, \pi].
     """
+    if angle_rad > np.pi:
+        angle_rad = angle_rad - 2* np.pi
+    if angle_rad < -np.pi:
+        angle_rad = angle_rad + 2* np.pi
+        
     return angle_rad
 
 
@@ -107,6 +112,28 @@ def init_landmarks(init_measure, init_measure_cov, init_pose, init_pose_cov):
     landmark = np.zeros((2 * k, 1))
     landmark_cov = np.zeros((2 * k, 2 * k))
 
+    x = init_pose[0][0]
+    y = init_pose[1][0]
+    theta = init_pose[2][0]
+
+    for i in range(k):
+        beta = warp2pi(init_measure[2*i][0])
+        r = init_measure[2*i + 1][0]
+
+        lx = x + r * np.cos(beta + theta)
+        ly = y + r * np.sin(beta + theta)
+
+        landmark[2*i][0] = lx
+        landmark[2*i+1][0] = ly
+
+        H = np.array([[1, 0, -r*np.sin(beta + theta)]
+                    , [0, 1, r*np.cos(beta + theta)]])
+
+        F = np.array([[-r*np.sin(beta + theta), np.cos(beta + theta)], 
+                      [r*np.cos(beta + theta), np.sin(beta + theta)]])
+
+        landmark_cov[2*i:2*i+2, 2*i:2*i+2] = H @ init_pose_cov @ H.T + F @ init_measure_cov @ F.T
+
     return k, landmark, landmark_cov
 
 
@@ -123,7 +150,29 @@ def predict(X, P, control, control_cov, k):
     \return P_pre Predicted P covariance of shape (3 + 2k, 3 + 2k).
     '''
 
-    return X, P
+    d, alpha = control[0][0], control[1][0]
+    theta = X[2][0]
+
+    # Predicted state X
+    F = np.concatenate((np.identity(3), np.zeros((3, 2*k))), axis=1)
+    delta_X = np.array(([[d * np.cos(theta)],
+                          [d * np.sin(theta)], [alpha]]), dtype='float')
+    X_pre = X + F.T @ delta_X
+
+    # Prediction covariance [state space covariance updated with Jacobian wrt state to linearize motion model]
+    G = np.identity(3 + 2*k)
+    G[0:3, 0:3] = np.array(([[1, 0, -d*np.sin(theta)], 
+                        [0, 1, d*np.cos(theta)], [0, 0, 1]]), dtype='float') 
+
+    # Control covariance [control space to state space] 
+    rot_z = np.array(([[np.cos(theta), -np.sin(theta), 0], 
+                      [np.sin(theta), np.cos(theta), 0], [0, 0, 1]]), dtype='float')
+    R = rot_z @ control_cov @ rot_z.T
+
+    # Predicted state covariance 
+    P_pre = G @ P @ G.T + F.T @ R @ F
+
+    return X_pre, P_pre
 
 
 def update(X_pre, P_pre, measure, measure_cov, k):
@@ -139,7 +188,38 @@ def update(X_pre, P_pre, measure, measure_cov, k):
     \return P Updated P covariance of shape (3 + 2k, 3 + 2k).
     '''
 
-    return X_pre, P_pre
+    for i in range(k):
+        x, y, theta = X_pre[0][0], X_pre[1][0], X_pre[2][0]
+        lx = X_pre[3 + 2*i][0]
+        ly = X_pre[3 + 2*i +1][0]
+
+        # delta = np.array(([[lx - x], [ly - y]]), dtype='float')
+        delta_x = lx - x
+        delta_y = ly - y
+        q = delta_x ** 2 + delta_y ** 2
+        q_sqrt = np.sqrt(q)
+        # beta = warp2pi(np.arctan2(delta_y, delta_x)-theta)
+        
+        h = np.array([[warp2pi(np.arctan2(delta_y, delta_x)-theta)], [q_sqrt]], dtype = 'float')
+        
+        F = np.zeros((5, 3+2*k))
+        F[0:3, 0:3] = np.identity(3)
+        F[3:5, 3+(2*i):5+(2*i)] = np.identity(2)
+
+        H = ((1/q) * np.array([[delta_y, -delta_x, -q, -delta_y, delta_x],
+                               [-q_sqrt*delta_x, -q_sqrt*delta_y, 0, q_sqrt*delta_x, q_sqrt*delta_y]], dtype='float')) @ F
+        # Kalman Gain
+        K = P_pre @ H.T @ np.linalg.inv((H @ P_pre @ H.T) + measure_cov)
+        
+        # Update step
+        delta_X = (measure[2*i:2*i+2] - h)
+        delta_X[0,:] = warp2pi(delta_X[0,:])
+        X_pre = X_pre + K @ delta_X
+        P_pre = (np.identity(3+2*k) - K @ H) @ P_pre
+
+    X = X_pre
+    P = P_pre
+    return X, P
 
 
 def evaluate(X, P, k):
@@ -156,6 +236,16 @@ def evaluate(X, P, k):
     plt.scatter(l_true[0::2], l_true[1::2])
     plt.draw()
     plt.waitforbuttonpress(0)
+
+    for i in range(k):
+        l = X[3+2*i:5+2*i, 0:1]
+        l_expected = np.array([[l_true[2*i]], [l_true[2*i+1]]], dtype='float')
+        delta = l - l_expected
+
+        eucledian = np.sqrt(delta.T @ delta)
+        mahalanobis = np.sqrt(delta.T @ np.linalg.inv(P[3+2*i:5+2*i, 3+2*i:5+2*i]) @ delta)
+
+        print(f'Landmark {i}:   Eucledian distance: {eucledian[0]}   Mahalanobis disctance: {mahalanobis[0]}')
 
 
 def main():
@@ -175,7 +265,7 @@ def main():
     sig_r2 = sig_r**2
 
     # Open data file and read the initial measurements
-    data_file = open("../data/data.txt")
+    data_file = open("data/data.txt")
     line = data_file.readline()
     fields = re.split('[\t ]', line)[:-1]
     arr = np.array([float(field) for field in fields])
