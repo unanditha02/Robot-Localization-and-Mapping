@@ -20,6 +20,7 @@ def solve_pinv(A, b):
     # TODO: return x s.t. Ax = b using pseudo inverse.
     N = A.shape[1]
     x = np.zeros((N, ))
+    x = inv(A.T @ A) @ A.T @ b
     return x, None
 
 
@@ -29,6 +30,11 @@ def solve_lu(A, b):
     N = A.shape[1]
     x = np.zeros((N, ))
     U = eye(N)
+
+    LU = splu(A.T @ A, permc_spec='NATURAL')
+    x = LU.solve(A.T @ b)
+    U = LU.U
+
     return x, U
 
 
@@ -38,6 +44,11 @@ def solve_lu_colamd(A, b):
     N = A.shape[1]
     x = np.zeros((N, ))
     U = eye(N)
+
+    LU = splu(A.T @ A, permc_spec='COLAMD')
+    x = LU.solve(A.T @ b)
+    U = LU.U
+
     return x, U
 
 
@@ -47,6 +58,9 @@ def solve_qr(A, b):
     N = A.shape[1]
     x = np.zeros((N, ))
     R = eye(N)
+
+    Q, R, _, _ = rz(A, b, permc_spec='NATURAL')
+    x = spsolve_triangular(R, Q, lower=False)
     return x, R
 
 
@@ -56,6 +70,10 @@ def solve_qr_colamd(A, b):
     N = A.shape[1]
     x = np.zeros((N, ))
     R = eye(N)
+
+    Q, R, E, _ = rz(A, b, permc_spec='COLAMD')
+    x = permutation_vector_to_matrix(E) @ spsolve_triangular(R, Q, lower=False)
+
     return x, R
 
 

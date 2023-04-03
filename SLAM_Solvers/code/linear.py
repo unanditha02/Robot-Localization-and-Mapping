@@ -41,10 +41,28 @@ def create_linear_system(odoms, observations, sigma_odom, sigma_observation,
     sqrt_inv_obs = np.linalg.inv(scipy.linalg.sqrtm(sigma_observation))
 
     # TODO: First fill in the prior to anchor the 1st pose at (0, 0)
+    A[0:2, 0:2] = np.eye(2)
 
     # TODO: Then fill in odometry measurements
+    Ho = np.array([[-1, 0, 1, 0], [0, -1, 0, 1]])
+    # Ao = sqrt_inv_odom @ Ho
+    for i in range(n_odom):
+        # A[2*(i+1):2*(i+2), 2*i:2*(i+1)] = Ao
+        A[2*(i+1):2*(i+2), 2*i:2*(i+2)] = sqrt_inv_odom @ Ho
+        b[2*(i+1):2*(i+2)] = sqrt_inv_odom @ odoms[i]
 
     # TODO: Then fill in landmark measurements
+    Hl = np.array([[-1, 0, 1, 0], [0, -1, 0, 1]])
+    Al = sqrt_inv_obs @ Hl
+
+    for i in range(n_obs):
+        pose_idx = int(observations[i, 0])
+        landmark_idx = int(observations[i, 1])
+        measurements = observations[i, 2::]
+
+        A[2*(n_odom+1+i):2*(n_odom+2+i), 2*pose_idx:2*(pose_idx+1)] = Al[:, 0:2]
+        A[2*(n_odom+1+i):2*(n_odom+2+i), 2*(n_poses+landmark_idx):2*(n_poses+landmark_idx+1)] = Al[:, 2::]
+        b[2*(n_odom+1+i):2*(n_odom+2+i)] = sqrt_inv_obs @ measurements
 
     return csr_matrix(A), b
 
