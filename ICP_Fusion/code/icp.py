@@ -49,6 +49,8 @@ def find_projective_correspondence(source_points,
 
     # TODO: first filter: valid projection
     mask = np.zeros_like(target_us).astype(bool)
+    # check for validity i.e. within limits h, w
+    mask[(target_us < w) & (target_us >= 0) & (target_vs < h) & (target_vs >= 0) & (target_ds >= 0)] = True
     # End of TODO
 
     source_indices = source_indices[mask]
@@ -58,6 +60,10 @@ def find_projective_correspondence(source_points,
 
     # TODO: second filter: apply distance threshold
     mask = np.zeros_like(target_us).astype(bool)
+    # check norm distance between target vertex map and source projection
+    target_points = target_vertex_map[target_vs, target_us, :]
+    norm_dist = np.linalg.norm((T_source_points - target_points), axis=1)
+    mask[norm_dist <= dist_diff] = True
     # End of TODO
 
     source_indices = source_indices[mask]
@@ -82,6 +88,15 @@ def build_linear_system(source_points, target_points, target_normals, T):
     b = np.zeros((M, ))
 
     # TODO: build the linear system
+    for i in range(M):
+        pi_prime = p_prime[i, :].T.reshape((3, 1))
+        pi_cross = np.array([[0, -pi_prime[2, 0], pi_prime[1, 0]],
+                       [pi_prime[2, 0], 0, -pi_prime[0, 0]],
+                       [-pi_prime[1, 0], pi_prime[0, 0], 0]])
+        nq = n_q[i, :]
+
+        A[i, :] = nq.T @ np.hstack((-pi_cross, np.eye(3)))
+        b[i,] = -nq.reshape(1, 3) @ (pi_prime - q[i, :].reshape(3, 1))
     # End of TODO
 
     return A, b
@@ -129,7 +144,13 @@ def solve(A, b):
     \return delta (6, ) vector by solving the linear system. You may directly use dense solvers from numpy.
     '''
     # TODO: write your relevant solver
-    return np.zeros((6, ))
+
+    # QR solver
+    Q, R = np.linalg.qr(A)
+    d = np.dot(Q.T, b)
+    soln = np.dot(np.linalg.inv(R), d)
+    
+    return soln
 
 
 def icp(source_points,
